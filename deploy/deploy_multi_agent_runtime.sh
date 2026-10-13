@@ -47,10 +47,12 @@ gcloud services enable \
 
 PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)")"
 RE_SERVICE_AGENT="service-${PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
-gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member="serviceAccount:${RE_SERVICE_AGENT}" \
-  --role="roles/datastore.user" \
-  --Condition=None --quiet >/dev/null 2>&1 || true
+for IAM_ROLE in "roles/datastore.user" "roles/aiplatform.user"; do
+  gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${RE_SERVICE_AGENT}" \
+    --role="${IAM_ROLE}" \
+    --Condition=None --quiet >/dev/null 2>&1 || true
+done
 
 FIRESTORE_DB="${CLAIM_PULSE_FIRESTORE_DB:-claimpulse-db}"
 

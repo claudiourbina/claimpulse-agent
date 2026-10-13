@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Generator
 from dataclasses import asdict, dataclass
 from typing import Any
 
+import httpx
 from google.adk.agents.remote_a2a_agent import (
     AGENT_CARD_WELL_KNOWN_PATH,
     RemoteA2aAgent,
@@ -14,6 +16,37 @@ from google.adk.agents.remote_a2a_agent import (
 from app.telemetry.tracer import get_logger, traced_operation
 
 logger = get_logger("claimpulse.discovery")
+
+
+class GoogleCloudBearerAuth(httpx.Auth):
+    """Attaches a fresh Google Cloud ADC Bearer token to outbound RemoteA2aAgent HTTP requests."""
+
+    def __init__(self) -> None:
+        self._creds: Any = None
+
+    def _get_token(self) -> str | None:
+        try:
+            import google.auth
+            import google.auth.transport.requests
+
+            if self._creds is None:
+                self._creds, _ = google.auth.default(
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                )
+            if not self._creds.valid or not self._creds.token:
+                self._creds.refresh(google.auth.transport.requests.Request())
+            return str(self._creds.token)
+        except Exception as exc:
+            logger.warning(f"ADC token refresh skipped for A2A request: {exc}")
+            return None
+
+    def auth_flow(
+        self, request: httpx.Request
+    ) -> Generator[httpx.Request, httpx.Response, None]:
+        token = self._get_token()
+        if token:
+            request.headers["Authorization"] = f"Bearer {token}"
+        yield request
 
 
 @dataclass
@@ -216,15 +249,21 @@ class AgentRegistryDiscoveryService:
             return results
 
     def build_remote_a2a_sub_agents(self) -> list[RemoteA2aAgent]:
-        """Creates ADK `RemoteA2aAgent` instances for specialists discovered on Agent Runtime."""
+        """Creates authenticated ADK `RemoteA2aAgent` instances for specialists on Agent Runtime."""
         remote_agents: list[RemoteA2aAgent] = []
         for item in self.discover_specialists():
             if item.transport == "remote_a2a_agent_runtime":
+                auth_client = httpx.AsyncClient(
+                    auth=GoogleCloudBearerAuth(),
+                    timeout=180.0,
+                )
                 remote_agents.append(
                     RemoteA2aAgent(
                         name=item.name,
                         description=item.description,
                         agent_card=item.agent_card_url,
+                        httpx_client=auth_client,
+                        timeout=180.0,
                     )
                 )
         return remote_agents

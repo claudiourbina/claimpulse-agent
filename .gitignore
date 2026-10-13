@@ -204,6 +204,7 @@ my_env.tfvars
 .env
 .google-agents-cli/
 deployment_metadata.json.lock
+deployment_metadata.*.json
 
 # A2A Inspector
 tools/a2a-inspector/

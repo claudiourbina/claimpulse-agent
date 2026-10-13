@@ -292,7 +292,18 @@ class FirestoreRepository:
         database: str | None = None,
         client: Any | None = None,
     ) -> None:
-        self._project_id = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT")
+        raw_project = (
+            project_id
+            or os.environ.get("CLAIM_PULSE_GCP_PROJECT_ID")
+            or os.environ.get("GOOGLE_CLOUD_PROJECT")
+        )
+        # Vertex AI Agent Runtime injects numeric project number into GOOGLE_CLOUD_PROJECT,
+        # whereas Cloud Firestore requires the string project_id.
+        if raw_project and raw_project.isdigit():
+            raw_project = os.environ.get(
+                "CLAIM_PULSE_GCP_PROJECT_ID", "fde-onboarding-projects"
+            )
+        self._project_id = raw_project
         self._database = database or os.environ.get(
             "CLAIM_PULSE_FIRESTORE_DB", "claimpulse-db"
         )

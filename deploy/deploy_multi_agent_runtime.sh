@@ -97,7 +97,7 @@ print(creds.token)
     --region "${REGION}" \
     --service-name "${service_name}" \
     --labels "app=claimpulse,role=${role}" \
-    --update-env-vars "CLAIM_PULSE_AGENT_ROLE=${role},CLAIM_PULSE_STORAGE_BACKEND=firestore,CLAIM_PULSE_FIRESTORE_DB=${FIRESTORE_DB},CLAIM_PULSE_DEPLOYMENT_MODE=agent_runtime${extra_env}" \
+    --update-env-vars "CLAIM_PULSE_AGENT_ROLE=${role},CLAIM_PULSE_GCP_PROJECT_ID=${PROJECT_ID},CLAIM_PULSE_STORAGE_BACKEND=firestore,CLAIM_PULSE_FIRESTORE_DB=${FIRESTORE_DB},CLAIM_PULSE_DEPLOYMENT_MODE=agent_runtime,CLAIM_PULSE_PRO_MODEL=gemini-2.5-pro${extra_env}" \
     --no-confirm-project
 
   cp deployment_metadata.json "${meta_backup}"

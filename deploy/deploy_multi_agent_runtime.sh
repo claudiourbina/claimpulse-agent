@@ -76,9 +76,10 @@ print(creds.token)
 ")"
   export CLOUDSDK_AUTH_ACCESS_TOKEN
 
-  if [[ -f "${meta_backup}" ]]; then
+  if [[ -f "${meta_backup}" ]] && grep -q '"remote_agent_runtime_id"' "${meta_backup}"; then
     cp "${meta_backup}" deployment_metadata.json
   else
+    rm -f "${meta_backup}"
     echo "{}" > deployment_metadata.json
   fi
 

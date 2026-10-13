@@ -23,7 +23,7 @@ from app.telemetry.tracer import get_logger, record_metric_event, traced_operati
 logger = get_logger("claimpulse.guardrails")
 
 FAST_MODEL = os.environ.get("CLAIM_PULSE_FAST_MODEL", "gemini-3.8-flash")
-PRO_MODEL = os.environ.get("CLAIM_PULSE_PRO_MODEL", "gemini-3.8-pro")
+PRO_MODEL = os.environ.get("CLAIM_PULSE_PRO_MODEL", "gemini-2.5-pro")
 
 _PROMPT_INJECTION_PATTERNS = re.compile(
     r"(ignore\s+all\s+previous\s+instructions|system\s+override\s+mode|"

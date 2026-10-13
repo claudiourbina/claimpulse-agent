@@ -166,14 +166,14 @@ def test_model_router_and_role_factory() -> None:
         "Sufrí un volcamiento con múltiples vehículos y heridos en la autopista, hay humo y necesito grúa de emergencia"
     )
     assert complex_decision.tier_complexity == "DEEP_REASONING"
-    assert complex_decision.selected_model == "gemini-3.8-pro"
+    assert complex_decision.selected_model == "gemini-2.5-pro"
     assert complex_decision.target_specialist == "claimpulse_dispatch_specialist"
 
     # Verify create_llm_for_prompt swaps the underlying Gemini model instance
     fast_llm = router.create_llm_for_prompt("Consulta simple POL-CL-1001")
     pro_llm = router.create_llm_for_prompt("Volcamiento catastrófico severidad 10 con heridos")
     assert fast_llm.model == "gemini-3.8-flash"
-    assert pro_llm.model == "gemini-3.8-pro"
+    assert pro_llm.model == "gemini-2.5-pro"
 
     # Verify all 4 Agent Runtime role entrypoints build cleanly
     for role in ("supervisor", "intake", "triage", "dispatch"):

@@ -1,0 +1,48 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "tier1_fast_track_cosmetic",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Hola, tengo la póliza POL-CL-1001. Ayer estacionando en Las Condes tuve un rayón leve en el parachoques trasero, severidad 2 de 10, el auto anda perfecto y no hay heridos."
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "tier2_collision_adjuster_schedule",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Tengo la póliza POL-CL-1002. Tuve un choque moderado en Providencia, se abolló el capó y se rompió un foco (severidad 6 de 10). No hay heridos y el vehículo aún se mueve, pero necesito evaluar el siniestro y agendar un perito para el 2026-10-15T10:00:00 por Virtual Google Meet."
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "tier3_critical_highway_emergency",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "¡Emergencia! Mi póliza es POL-CL-1003, sufrí un choque grave en la Ruta 5 Sur km 42, severidad 9 de 10, sale humo del motor, el auto no enciende y hay un pasajero herido."
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "specialist_discovery_query",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "¿Qué agentes especialistas tienes disponibles en Agent Runtime para atender mi siniestro?"
+          }
+        ]
+      }
+    }
+  ]
+}

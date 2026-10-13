@@ -26,6 +26,7 @@ on:
 
 jobs:
   deploy_and_test_staging:
+    if: ${{ vars.CICD_PROJECT_ID != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
@@ -95,6 +96,7 @@ jobs:
           echo "_________________________________________________________________________"
 
   call_production_workflow:
+    if: ${{ vars.CICD_PROJECT_ID != '' }}
     needs: deploy_and_test_staging
     uses: ./.github/workflows/deploy-to-prod.yaml
     permissions:

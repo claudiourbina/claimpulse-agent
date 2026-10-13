@@ -3,8 +3,16 @@
 # and seed the remote Serverless Cloud Firestore database.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+if [[ -f "${REPO_ROOT}/.venv.local" ]]; then
+  # shellcheck disable=SC1091
+  source "${REPO_ROOT}/.venv.local"
+fi
+
 PROJECT_ID="${1:-${GOOGLE_CLOUD_PROJECT:-}}"
-REGION="${2:-${GOOGLE_CLOUD_LOCATION:-us-central1}}"
+REGION="${2:-us-central1}"
 
 if [[ -z "${PROJECT_ID}" ]]; then
   echo "Usage: $0 <GCP_PROJECT_ID> [REGION]"

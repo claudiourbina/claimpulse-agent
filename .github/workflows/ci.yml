@@ -1,0 +1,39 @@
+name: CI — Unit Tests, Golden Eval, Lint & Typecheck
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run Ruff linter
+        run: uv run ruff check .
+
+      - name: Run static type checker (ty)
+        run: uv run ty check
+
+      - name: Run unit, guardrail, telemetry & golden benchmark tests (55 tests)
+        env:
+          CLAIM_PULSE_DEPLOYMENT_MODE: local
+          CLAIM_PULSE_STORAGE_BACKEND: sqlite
+        run: uv run pytest tests/unit -v

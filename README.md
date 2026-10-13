@@ -34,30 +34,30 @@
 ## 🏗️ System Architecture
 
 ```mermaid
-graph TD
-    User([👤 Policyholder in Gemini Enterprise / A2A Client]) <-->|A2A JSON-RPC / :streamQuery| SupervisorEngine[Supervisor Reasoning Engine<br/>Vertex AI Agent Runtime]
+flowchart TD
+    User(["Policyholder in Gemini Enterprise or A2A Client"]) <-->|"A2A JSON-RPC or streamQuery"| SupervisorEngine["Supervisor Reasoning Engine (Vertex AI Agent Runtime)"]
 
-    subgraph Guardrails & Routing Layer
-        SupervisorEngine --> SafetyPlugin[ClaimPulseSafetyGuardrailPlugin<br/>Prompt Injection & XSS Blocker]
-        SafetyPlugin --> ModelRouter[ClaimPulseModelRouter<br/>Complexity & Pathway Router]
-        ModelRouter --> Discovery[AgentRegistryDiscoveryService<br/>Dynamic Agent Runtime Lookup]
+    subgraph GuardrailsLayer["Guardrails and Routing Layer"]
+        SupervisorEngine --> SafetyPlugin["ClaimPulseSafetyGuardrailPlugin (Prompt Injection and XSS Blocker)"]
+        SafetyPlugin --> ModelRouter["ClaimPulseModelRouter (Complexity and Pathway Router)"]
+        ModelRouter --> Discovery["AgentRegistryDiscoveryService (Dynamic Agent Runtime Lookup)"]
     end
 
-    subgraph Distributed Specialist Reasoning Engines on Agent Runtime
-        Discovery -->|RemoteA2aAgent / Local Fallback| IntakeEngine[claimpulse-intake-agent<br/>Policy & Coverage Verification]
-        Discovery -->|RemoteA2aAgent / Local Fallback| TriageEngine[claimpulse-triage-agent<br/>3-Tier Severity & Reserve Assessor]
-        Discovery -->|RemoteA2aAgent / Local Fallback| DispatchEngine[claimpulse-dispatch-agent<br/>Roadside Tow & Workspace Scheduler]
+    subgraph SpecialistsLayer["Distributed Specialist Reasoning Engines on Agent Runtime"]
+        Discovery -->|"RemoteA2aAgent or Local Fallback"| IntakeEngine["claimpulse-intake-agent (Policy and Coverage Verification)"]
+        Discovery -->|"RemoteA2aAgent or Local Fallback"| TriageEngine["claimpulse-triage-agent (3-Tier Severity and Reserve Assessor)"]
+        Discovery -->|"RemoteA2aAgent or Local Fallback"| DispatchEngine["claimpulse-dispatch-agent (Roadside Tow and Workspace Scheduler)"]
     end
 
-    subgraph Remote Serverless Data, Memory & Observability
-        IntakeEngine & TriageEngine & DispatchEngine --> Repo[(Cloud Firestore Serverless<br/>+ SQLite Local Fallback)]
-        SupervisorEngine --> Memory[HistoryCompactor &<br/>AsyncMemoryConsolidator]
-        SupervisorEngine --> Telemetry[OpenTelemetry Spans +<br/>PIIScrubber + BigQuery Analytics]
+    subgraph DataAndObservability["Remote Serverless Data Memory and Observability"]
+        IntakeEngine & TriageEngine & DispatchEngine --> Repo[("Cloud Firestore Serverless and SQLite Fallback")]
+        SupervisorEngine --> Memory["HistoryCompactor and AsyncMemoryConsolidator"]
+        SupervisorEngine --> Telemetry["OpenTelemetry Spans and PIIScrubber and BigQuery Analytics"]
     end
 
-    subgraph Deterministic A2UI v0.8 Engine
-        IntakeEngine & TriageEngine & DispatchEngine --> ViewBuilders[Typed A2UI v0.8 View Builders]
-        ViewBuilders --> ValidatorGate[A2UICatalogValidator Gate]
+    subgraph PresentationEngine["Deterministic A2UI v0.8 Engine"]
+        IntakeEngine & TriageEngine & DispatchEngine --> ViewBuilders["Typed A2UI v0.8 View Builders"]
+        ViewBuilders --> ValidatorGate["A2UICatalogValidator Gate"]
     end
 ```
 

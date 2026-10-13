@@ -20,25 +20,32 @@ import os
 
 from google.adk.agents import Agent
 from google.adk.agents.callback_context import CallbackContext
-from google.adk.apps import App
+from google.adk.apps import App, ResumabilityConfig
 from google.adk.models import Gemini
 from google.genai import types
 
-from app.discovery.model_router import ClaimPulseSafetyGuardrailPlugin
+from app.discovery.model_router import (
+    FAST_MODEL,
+    PRO_MODEL,
+    ClaimPulseModelRouter,
+    ClaimPulseSafetyGuardrailPlugin,
+)
 from app.discovery.registry_discovery import get_discovery_service
 from app.telemetry.tracer import configure_telemetry, record_metric_event
 from app.tools import (
     assess_claim_severity,
+    confirm_human_in_the_loop_action,
     discover_available_specialists,
     dispatch_roadside_assistance,
     get_claim_status_and_history,
+    high_stakes_dispatch_tool,
     schedule_adjuster_and_workshop,
     verify_policy_and_coverage,
 )
 
 configure_telemetry()
 
-MODEL = "gemini-3.8-flash"
+MODEL = FAST_MODEL
 
 
 async def initialize_claimpulse_state(callback_context: CallbackContext) -> None:
@@ -48,6 +55,7 @@ async def initialize_claimpulse_state(callback_context: CallbackContext) -> None
         callback_context.state["deployment_mode"] = os.environ.get(
             "CLAIM_PULSE_DEPLOYMENT_MODE", "local"
         )
+        callback_context.state["hitl_approved"] = False
     record_metric_event(
         "agent.turn.start",
         {
@@ -61,11 +69,11 @@ async def initialize_claimpulse_state(callback_context: CallbackContext) -> None
 
 
 def create_intake_specialist() -> Agent:
-    """Factory for the ClaimPulse Policy & Identity Verification Specialist Agent."""
+    """Factory for the ClaimPulse Policy & Identity Verification Specialist Agent (Fast LLM)."""
     return Agent(
         name="claimpulse_intake_specialist",
         model=Gemini(
-            model=MODEL,
+            model=FAST_MODEL,
             retry_options=types.HttpRetryOptions(attempts=3),
         ),
         description=(
@@ -87,16 +95,16 @@ Responsibilities:
 
 
 def create_triage_specialist() -> Agent:
-    """Factory for the ClaimPulse 3-Tier Severity & Reserve Triage Specialist Agent."""
+    """Factory for the ClaimPulse 3-Tier Severity & Reserve Triage Specialist Agent (Pro LLM)."""
     return Agent(
         name="claimpulse_triage_specialist",
         model=Gemini(
-            model=MODEL,
+            model=PRO_MODEL,
             retry_options=types.HttpRetryOptions(attempts=3),
         ),
         description=(
-            "Specialist agent that evaluates claim severity (1-10), drivable status, "
-            "and injuries to classify claims into Tier 1, Tier 2, or Tier 3."
+            "Specialist agent that uses Gemini Pro reasoning to evaluate claim severity (1-10), "
+            "drivable status, and injuries to classify claims into Tier 1, Tier 2, or Tier 3."
         ),
         instruction="""You are the ClaimPulse 3-Tier Clinical & Insurance Severity Triage Specialist.
 Current verified policy: {verified_policy_number?}
@@ -120,12 +128,13 @@ def create_dispatch_specialist() -> Agent:
     return Agent(
         name="claimpulse_dispatch_specialist",
         model=Gemini(
-            model=MODEL,
+            model=FAST_MODEL,
             retry_options=types.HttpRetryOptions(attempts=3),
         ),
         description=(
             "Specialist agent that dispatches emergency tow trucks for Tier 3 claims "
-            "and schedules accredited adjusters and workshops with Google Calendar and Meet links."
+            "(with Human-in-the-Loop confirmation hooks) and schedules accredited adjusters "
+            "and workshops with Google Calendar and Meet links."
         ),
         instruction="""You are the ClaimPulse Emergency Roadside & Adjuster Dispatch Specialist.
 Active claim ID: {active_claim_id?}
@@ -134,15 +143,23 @@ Recommended specialty: {recommended_specialty?}
 
 Responsibilities:
 1. For Tier 3 critical emergencies or immobilized vehicles, immediately call `dispatch_roadside_assistance` and highlight life-safety instructions (911 / 131 / 133) plus the live Google Meet emergency adjuster bridge.
-2. For Tier 2 inspections or workshop requests, call `schedule_adjuster_and_workshop` and share the confirmed adjuster name, workshop address, Google Calendar sync link, and Google Meet room URL.
+2. If Human-in-the-Loop (HITL) confirmation is requested (`status == 'pending_human_approval'`), ask the user/supervisor to confirm and call `confirm_human_in_the_loop_action`.
+3. For Tier 2 inspections or workshop requests, call `schedule_adjuster_and_workshop` and share the confirmed adjuster name, workshop address, Google Calendar sync link, and Google Meet room URL.
 """,
-        tools=[schedule_adjuster_and_workshop, dispatch_roadside_assistance],
+        tools=[
+            schedule_adjuster_and_workshop,
+            high_stakes_dispatch_tool,
+            confirm_human_in_the_loop_action,
+        ],
         before_agent_callback=initialize_claimpulse_state,
     )
 
 
-def build_root_agent_for_role(role: str | None = None) -> Agent:
-    """Builds the root ADK Agent based on `CLAIM_PULSE_AGENT_ROLE`.
+def build_root_agent_for_role(
+    role: str | None = None,
+    prompt_hint: str | None = None,
+) -> Agent:
+    """Builds the root ADK Agent based on `CLAIM_PULSE_AGENT_ROLE` and dynamic model routing.
 
     Allows the same container image to be deployed as 4 independent Reasoning Engines
     on Vertex AI Agent Runtime (`supervisor`, `intake`, `triage`, `dispatch`), while
@@ -165,7 +182,17 @@ def build_root_agent_for_role(role: str | None = None) -> Agent:
         specialist.name = "claimpulse_agent"
         return specialist
 
-    # Default: Supervisor orchestrator with dynamic Agent Runtime discovery
+    # Default: Supervisor orchestrator with dynamic Agent Runtime discovery & LLM router
+    router = ClaimPulseModelRouter(fast_model=FAST_MODEL, pro_model=PRO_MODEL)
+    selected_llm = (
+        router.create_llm_for_prompt(prompt_hint)
+        if prompt_hint
+        else Gemini(
+            model=MODEL,
+            retry_options=types.HttpRetryOptions(attempts=3),
+        )
+    )
+
     discovery_service = get_discovery_service()
     remote_sub_agents = discovery_service.build_remote_a2a_sub_agents()
     sub_agents = (
@@ -183,14 +210,11 @@ def build_root_agent_for_role(role: str | None = None) -> Agent:
         # from the project `name:` recorded there, and telemetry reports it as
         # gen_ai.agent.name.
         name="claimpulse_agent",
-        model=Gemini(
-            model=MODEL,
-            retry_options=types.HttpRetryOptions(attempts=3),
-        ),
+        model=selected_llm,
         description=(
             "ClaimPulse Supervisor Agent: orchestrates policy intake, 3-tier severity "
-            "triage, adjuster scheduling, and emergency roadside dispatch across "
-            "Vertex AI Agent Runtime specialists."
+            "triage, adjuster scheduling, Human-in-the-Loop confirmation gates, and "
+            "emergency roadside dispatch across Vertex AI Agent Runtime specialists."
         ),
         instruction="""You are ClaimPulse, an Autonomous Insurance Claim Intake, 3-Tier Severity Triage & Emergency Roadside Dispatch Supervisor built on Gemini Enterprise Agent Platform.
 
@@ -199,6 +223,7 @@ Session Context:
 - Policyholder: {holder_name?}
 - Active Claim ID: {active_claim_id?}
 - Last Triage Tier: {last_triage_tier?}
+- Active Routed LLM: {active_llm_model?}
 - Compacted Session Summary: {compacted_history_summary?}
 
 Core Operating Protocol:
@@ -207,15 +232,17 @@ Core Operating Protocol:
 3. **Deterministic 3-Tier Triage**: Evaluate any reported damage or incident by calling `assess_claim_severity`:
    - **Tier 1 (Severity 1-3, minor cosmetic/glass, drivable, no injuries)**: Present the Fast-Track digital payout breakdown (estimated repair, deductible, net payout) and express workshop options.
    - **Tier 2 (Severity 4-7, moderate collision or property damage)**: After `assess_claim_severity`, also call `schedule_adjuster_and_workshop` to assign an accredited adjuster, workshop, Google Calendar link, and Google Meet link.
-   - **Tier 3 (Severity 8-10, immobilized vehicle, smoke/fire, highway hazard, or injuries)**: Immediately prioritize life safety (911 / 131 SAMU / 133), call `assess_claim_severity`, and immediately call `dispatch_roadside_assistance` to dispatch a tow truck with live ETA and an Emergency Adjuster Google Meet bridge.
-4. **Core UI Invariant**: Never output raw HTML or `<script>` tags. Always summarize clearly in the user's language (Spanish or English) using the structured data returned by the tools.
+   - **Tier 3 (Severity 8-10, immobilized vehicle, smoke/fire, highway hazard, or injuries)**: Immediately prioritize life safety (911 / 131 SAMU / 133), call `assess_claim_severity`, and call `dispatch_roadside_assistance` to dispatch a tow truck with live ETA and an Emergency Adjuster Google Meet bridge.
+4. **Human-in-the-Loop (HITL) Confirmation Gate**: When a high-stakes tool execution returns `status == 'pending_human_approval'`, present the confirmation prompt to the human reviewer and invoke `confirm_human_in_the_loop_action` once approved before re-running the dispatch.
+5. **Core UI Invariant**: Never output raw HTML or `<script>` tags. Always summarize clearly in the user's language (Spanish or English) using the structured data returned by the tools.
 """,
         tools=[
             discover_available_specialists,
             verify_policy_and_coverage,
             assess_claim_severity,
             schedule_adjuster_and_workshop,
-            dispatch_roadside_assistance,
+            high_stakes_dispatch_tool,
+            confirm_human_in_the_loop_action,
             get_claim_status_and_history,
         ],
         sub_agents=sub_agents,
@@ -225,8 +252,13 @@ Core Operating Protocol:
 
 root_agent = build_root_agent_for_role()
 
-# Initialize Runner-wide Plugins (Safety Guardrail + BigQuery Agent Analytics)
-_plugins = [ClaimPulseSafetyGuardrailPlugin(model_name=MODEL)]
+# Initialize Runner-wide Plugins (Safety Guardrail + Model Swapper + HITL Gate + BigQuery Analytics)
+_plugins = [
+    ClaimPulseSafetyGuardrailPlugin(
+        fast_model=FAST_MODEL,
+        pro_model=PRO_MODEL,
+    )
+]
 _project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
 _dataset_id = os.environ.get("BQ_ANALYTICS_DATASET_ID", "adk_agent_analytics")
 _location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
@@ -260,4 +292,5 @@ app = App(
     root_agent=root_agent,
     name="app",
     plugins=_plugins,
+    resumability_config=ResumabilityConfig(is_resumable=True),
 )

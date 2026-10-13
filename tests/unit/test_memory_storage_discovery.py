@@ -159,13 +159,21 @@ def test_model_router_and_role_factory() -> None:
     router = ClaimPulseModelRouter()
     fast_decision = router.route("Hola, quiero consultar mi póliza POL-CL-1001")
     assert fast_decision.tier_complexity == "FAST_PATH"
+    assert fast_decision.selected_model == "gemini-3.8-flash"
     assert fast_decision.target_specialist == "claimpulse_intake_specialist"
 
     complex_decision = router.route(
         "Sufrí un volcamiento con múltiples vehículos y heridos en la autopista, hay humo y necesito grúa de emergencia"
     )
     assert complex_decision.tier_complexity == "DEEP_REASONING"
+    assert complex_decision.selected_model == "gemini-3.8-pro"
     assert complex_decision.target_specialist == "claimpulse_dispatch_specialist"
+
+    # Verify create_llm_for_prompt swaps the underlying Gemini model instance
+    fast_llm = router.create_llm_for_prompt("Consulta simple POL-CL-1001")
+    pro_llm = router.create_llm_for_prompt("Volcamiento catastrófico severidad 10 con heridos")
+    assert fast_llm.model == "gemini-3.8-flash"
+    assert pro_llm.model == "gemini-3.8-pro"
 
     # Verify all 4 Agent Runtime role entrypoints build cleanly
     for role in ("supervisor", "intake", "triage", "dispatch"):
@@ -174,3 +182,4 @@ def test_model_router_and_role_factory() -> None:
 
     plugin = ClaimPulseSafetyGuardrailPlugin()
     assert plugin.name == "claimpulse_safety_guardrail"
+

@@ -6,7 +6,7 @@ import hashlib
 from datetime import UTC, datetime
 from typing import Any
 
-from google.adk.tools import ToolContext
+from google.adk.tools import FunctionTool, ToolContext
 from pydantic import ValidationError
 
 from app.a2ui.views import (
@@ -28,6 +28,7 @@ from app.core.models import (
     build_error_response,
 )
 from app.core.triage_engine import ClaimTriageEngine
+from app.discovery.model_router import HumanInTheLoopApprovalGate
 from app.discovery.registry_discovery import get_discovery_service
 from app.memory.consolidator import AsyncMemoryConsolidator
 from app.storage.repository import get_repository
@@ -438,6 +439,21 @@ def dispatch_roadside_assistance(
             ),
         )
 
+    # Human-in-the-Loop (HITL) confirmation gate for high-stakes emergency dispatch
+    hitl_gate = HumanInTheLoopApprovalGate()
+    hitl_pending = hitl_gate.evaluate_tool_call(
+        tool_name="dispatch_roadside_assistance",
+        tool_args={
+            "claim_id": validated.claim_id,
+            "location": validated.location,
+            "hazard_level": validated.hazard_level,
+            "requires_ambulance": validated.requires_ambulance,
+        },
+        tool_context=tool_context,
+    )
+    if hitl_pending is not None:
+        return hitl_pending
+
     repo = get_repository()
     claim = repo.get_claim(validated.claim_id)
     policy_number = claim.policy_number if claim else "POL-CL-EMERGENCY"
@@ -528,3 +544,77 @@ def get_claim_status_and_history(
         "claims": claims,
         "memory_facts": facts,
     }
+
+
+@trace_tool("confirm_human_in_the_loop_action")
+def confirm_human_in_the_loop_action(
+    action_id: str,
+    approved: bool,
+    supervisor_notes: str,
+    tool_context: ToolContext | None = None,
+) -> dict[str, Any]:
+    """Records explicit Human-in-the-Loop (HITL) approval or rejection for a high-stakes action.
+
+    Args:
+        action_id: The pending HITL action identifier (for example 'HITL-DSP-CLM-123456').
+        approved: True if the human operator/supervisor approves execution; False to reject.
+        supervisor_notes: Audit notes from the human reviewer explaining the decision.
+
+    Returns:
+        Dictionary with status, action_id, hitl_approved boolean, and audit timestamp.
+    """
+    clean_id = action_id.strip().upper()
+    if len(clean_id) < 4:
+        return build_error_response(
+            error_code="INVALID_HITL_ACTION_ID",
+            message=f"Action ID '{action_id}' is invalid.",
+            recovery_guidance="Pass the action_id returned by the pending_human_approval response (e.g. 'HITL-DSP-CLM-...').",
+        )
+
+    now_iso = datetime.now(UTC).isoformat()
+    _set_state(tool_context, "hitl_approved", approved)
+    _set_state(
+        tool_context,
+        "hitl_audit_record",
+        {
+            "action_id": clean_id,
+            "approved": approved,
+            "supervisor_notes": supervisor_notes,
+            "decided_at": now_iso,
+        },
+    )
+
+    record_metric_event(
+        "hitl.decision_recorded",
+        {
+            "action_id": clean_id,
+            "approved": approved,
+            "supervisor_notes": supervisor_notes,
+        },
+    )
+
+    if not approved:
+        return {
+            "status": "rejected_by_human",
+            "action_id": clean_id,
+            "hitl_approved": False,
+            "supervisor_notes": supervisor_notes,
+            "decided_at": now_iso,
+            "message": f"High-stakes action '{clean_id}' was rejected by human reviewer.",
+        }
+
+    return {
+        "status": "success",
+        "action_id": clean_id,
+        "hitl_approved": True,
+        "supervisor_notes": supervisor_notes,
+        "decided_at": now_iso,
+        "message": f"High-stakes action '{clean_id}' approved by human reviewer; ready to execute.",
+    }
+
+
+high_stakes_dispatch_tool = FunctionTool(
+    dispatch_roadside_assistance,
+    require_confirmation=HumanInTheLoopApprovalGate.requires_confirmation_predicate,
+)
+

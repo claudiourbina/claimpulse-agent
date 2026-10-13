@@ -10,9 +10,11 @@ from app.core.models import TriageTier
 from app.storage.repository import SQLiteRepository, reset_repository_for_tests
 from app.tools import (
     assess_claim_severity,
+    confirm_human_in_the_loop_action,
     discover_available_specialists,
     dispatch_roadside_assistance,
     get_claim_status_and_history,
+    high_stakes_dispatch_tool,
     schedule_adjuster_and_workshop,
     verify_policy_and_coverage,
 )
@@ -231,4 +233,57 @@ def test_get_claim_status_invalid_policy_prefix() -> None:
     res = get_claim_status_and_history("BAD-1001")
     assert res["status"] == "error"
     assert res["error_code"] == "INVALID_POLICY_NUMBER"
+
+
+def test_human_in_the_loop_confirmation_gate_for_emergency_dispatch() -> None:
+    ctx = DummyToolContext()
+    ctx.state["require_hitl_approval"] = True
+
+    # 1. High-stakes dispatch pauses for HITL confirmation when gate is armed
+    pending_res = dispatch_roadside_assistance(
+        claim_id="CLM-998877",
+        location="Ruta 5 Sur km 42",
+        hazard_level="CRITICAL",
+        requires_ambulance=True,
+        tool_context=ctx,  # type: ignore[arg-type]
+    )
+    assert pending_res["status"] == "pending_human_approval"
+    assert pending_res["hitl_confirmation_required"] is True
+    action_id = pending_res["action_id"]
+
+    # 2. Human supervisor approves via confirm_human_in_the_loop_action
+    approval = confirm_human_in_the_loop_action(
+        action_id=action_id,
+        approved=True,
+        supervisor_notes="Verified emergency telemetry and passenger status; approved.",
+        tool_context=ctx,  # type: ignore[arg-type]
+    )
+    assert approval["status"] == "success"
+    assert approval["hitl_approved"] is True
+    assert ctx.state["hitl_approved"] is True
+
+    # 3. Subsequent execution of dispatch_roadside_assistance proceeds immediately
+    dispatched = dispatch_roadside_assistance(
+        claim_id="CLM-998877",
+        location="Ruta 5 Sur km 42",
+        hazard_level="CRITICAL",
+        requires_ambulance=True,
+        tool_context=ctx,  # type: ignore[arg-type]
+    )
+    assert dispatched["status"] == "success"
+    assert dispatched["dispatch"]["status"] == "DISPATCHED"
+
+
+def test_human_in_the_loop_rejection_records_audit_trail() -> None:
+    ctx = DummyToolContext()
+    rej = confirm_human_in_the_loop_action(
+        action_id="HITL-DSP-CLM-0001",
+        approved=False,
+        supervisor_notes="Duplicate dispatch request cancelled by operator.",
+        tool_context=ctx,  # type: ignore[arg-type]
+    )
+    assert rej["status"] == "rejected_by_human"
+    assert rej["hitl_approved"] is False
+    assert high_stakes_dispatch_tool is not None
+
 

@@ -305,6 +305,8 @@ class FirestoreRepository:
                 project=self._project_id, database=self._database
             )
         self._prefix = os.environ.get("CLAIM_PULSE_COLLECTION_PREFIX", "claimpulse")
+        self._fallback = SQLiteRepository()
+        self._firestore_healthy = True
         self._ensure_seeded()
 
     def _col(self, name: str) -> Any:
@@ -317,7 +319,8 @@ class FirestoreRepository:
             if not doc.exists:
                 self.seed_defaults()
         except Exception as exc:
-            logger.warning(f"Firestore seed check skipped or deferred: {exc}")
+            self._firestore_healthy = False
+            logger.warning(f"Firestore seed check skipped or deferred (using SQLite fallback): {exc}")
 
     def seed_defaults(self) -> None:
         """Writes initial seed documents into Cloud Firestore."""
@@ -332,42 +335,75 @@ class FirestoreRepository:
                 self._col("roadside_units").document(u.unit_id).set(u.model_dump())
 
     def get_policy(self, policy_number: str) -> PolicyRecord | None:
+        if not self._firestore_healthy:
+            return self._fallback.get_policy(policy_number)
         with traced_operation(
             "db.firestore.get_policy", {"policy_number": policy_number}
         ):
-            doc = self._col("policies").document(policy_number.strip().upper()).get()
-            if not doc.exists:
-                return None
-            return PolicyRecord.model_validate(doc.to_dict())
+            try:
+                doc = self._col("policies").document(policy_number.strip().upper()).get()
+                if not doc.exists:
+                    return self._fallback.get_policy(policy_number)
+                return PolicyRecord.model_validate(doc.to_dict())
+            except Exception as exc:
+                logger.warning(f"Firestore get_policy fallback: {exc}")
+                return self._fallback.get_policy(policy_number)
 
     def list_policies(self) -> list[PolicyRecord]:
-        docs = self._col("policies").stream()
-        return [PolicyRecord.model_validate(d.to_dict()) for d in docs]
+        if not self._firestore_healthy:
+            return self._fallback.list_policies()
+        try:
+            docs = self._col("policies").stream()
+            res = [PolicyRecord.model_validate(d.to_dict()) for d in docs]
+            return res or self._fallback.list_policies()
+        except Exception:
+            return self._fallback.list_policies()
 
     def save_claim(self, claim: ClaimRecord) -> ClaimRecord:
+        self._fallback.save_claim(claim)
+        if not self._firestore_healthy:
+            return claim
         with traced_operation("db.firestore.save_claim", {"claim_id": claim.claim_id}):
-            self._col("claims").document(claim.claim_id).set(claim.model_dump())
+            try:
+                self._col("claims").document(claim.claim_id).set(claim.model_dump())
+            except Exception as exc:
+                logger.warning(f"Firestore save_claim fallback: {exc}")
             return claim
 
     def get_claim(self, claim_id: str) -> ClaimRecord | None:
-        doc = self._col("claims").document(claim_id.strip().upper()).get()
-        if not doc.exists:
-            return None
-        return ClaimRecord.model_validate(doc.to_dict())
+        if not self._firestore_healthy:
+            return self._fallback.get_claim(claim_id)
+        try:
+            doc = self._col("claims").document(claim_id.strip().upper()).get()
+            if not doc.exists:
+                return self._fallback.get_claim(claim_id)
+            return ClaimRecord.model_validate(doc.to_dict())
+        except Exception:
+            return self._fallback.get_claim(claim_id)
 
     def list_claims_by_policy(self, policy_number: str) -> list[ClaimRecord]:
-        normalized = policy_number.strip().upper()
-        docs = (
-            self._col("claims")
-            .where("policy_number", "==", normalized)
-            .stream()
-        )
-        claims = [ClaimRecord.model_validate(d.to_dict()) for d in docs]
-        return sorted(claims, key=lambda c: c.created_at, reverse=True)
+        if not self._firestore_healthy:
+            return self._fallback.list_claims_by_policy(policy_number)
+        try:
+            normalized = policy_number.strip().upper()
+            docs = (
+                self._col("claims")
+                .where("policy_number", "==", normalized)
+                .stream()
+            )
+            claims = [ClaimRecord.model_validate(d.to_dict()) for d in docs]
+            return sorted(claims, key=lambda c: c.created_at, reverse=True) or self._fallback.list_claims_by_policy(policy_number)
+        except Exception:
+            return self._fallback.list_claims_by_policy(policy_number)
 
     def find_adjusters(self, specialty: str | None = None) -> list[AdjusterProfile]:
-        docs = self._col("adjusters").stream()
-        all_adj = [AdjusterProfile.model_validate(d.to_dict()) for d in docs]
+        if not self._firestore_healthy:
+            return self._fallback.find_adjusters(specialty)
+        try:
+            docs = self._col("adjusters").stream()
+            all_adj = [AdjusterProfile.model_validate(d.to_dict()) for d in docs]
+        except Exception:
+            all_adj = []
         if not all_adj:
             all_adj = list(SEED_ADJUSTERS)
         if not specialty:
@@ -382,8 +418,13 @@ class FirestoreRepository:
         return matched or all_adj
 
     def find_workshops(self, specialty: str | None = None) -> list[WorkshopProfile]:
-        docs = self._col("workshops").stream()
-        all_ws = [WorkshopProfile.model_validate(d.to_dict()) for d in docs]
+        if not self._firestore_healthy:
+            return self._fallback.find_workshops(specialty)
+        try:
+            docs = self._col("workshops").stream()
+            all_ws = [WorkshopProfile.model_validate(d.to_dict()) for d in docs]
+        except Exception:
+            all_ws = []
         if not all_ws:
             all_ws = list(SEED_WORKSHOPS)
         if not specialty:
@@ -401,8 +442,13 @@ class FirestoreRepository:
         return matched or all_ws
 
     def find_roadside_unit(self, location: str) -> RoadsideUnit:
-        docs = self._col("roadside_units").stream()
-        units = [RoadsideUnit.model_validate(d.to_dict()) for d in docs]
+        if not self._firestore_healthy:
+            return self._fallback.find_roadside_unit(location)
+        try:
+            docs = self._col("roadside_units").stream()
+            units = [RoadsideUnit.model_validate(d.to_dict()) for d in docs]
+        except Exception:
+            units = []
         if not units:
             units = list(SEED_ROADSIDE_UNITS)
         loc_lower = location.lower()
@@ -416,47 +462,70 @@ class FirestoreRepository:
         return units[0]
 
     def save_appointment(self, appointment: AppointmentRecord) -> AppointmentRecord:
+        self._fallback.save_appointment(appointment)
+        if not self._firestore_healthy:
+            return appointment
         with traced_operation(
             "db.firestore.save_appointment",
             {"appointment_id": appointment.appointment_id},
         ):
-            self._col("appointments").document(appointment.appointment_id).set(
-                appointment.model_dump()
-            )
+            try:
+                self._col("appointments").document(appointment.appointment_id).set(
+                    appointment.model_dump()
+                )
+            except Exception as exc:
+                logger.warning(f"Firestore save_appointment fallback: {exc}")
             return appointment
 
     def save_dispatch(self, dispatch: DispatchRecord) -> DispatchRecord:
+        self._fallback.save_dispatch(dispatch)
+        if not self._firestore_healthy:
+            return dispatch
         with traced_operation(
             "db.firestore.save_dispatch", {"dispatch_id": dispatch.dispatch_id}
         ):
-            self._col("dispatches").document(dispatch.dispatch_id).set(
-                dispatch.model_dump()
-            )
+            try:
+                self._col("dispatches").document(dispatch.dispatch_id).set(
+                    dispatch.model_dump()
+                )
+            except Exception as exc:
+                logger.warning(f"Firestore save_dispatch fallback: {exc}")
             return dispatch
 
     def save_memory_fact(
         self, policy_number: str, fact_key: str, fact_value: str
     ) -> None:
-        scrubbed_val = PIIScrubber.scrub_text(fact_value)
-        doc_ref = self._col("memories").document(policy_number.strip().upper())
-        doc = doc_ref.get()
-        existing = doc.to_dict() if doc.exists else {}
-        facts = dict(existing.get("facts", {}))
-        facts[fact_key] = scrubbed_val
-        doc_ref.set(
-            {
-                "policy_number": policy_number.strip().upper(),
-                "facts": facts,
-                "updated_at": datetime.now(UTC).isoformat(),
-            }
-        )
+        self._fallback.save_memory_fact(policy_number, fact_key, fact_value)
+        if not self._firestore_healthy:
+            return
+        try:
+            scrubbed_val = PIIScrubber.scrub_text(fact_value)
+            doc_ref = self._col("memories").document(policy_number.strip().upper())
+            doc = doc_ref.get()
+            existing = doc.to_dict() if doc.exists else {}
+            facts = dict(existing.get("facts", {}))
+            facts[fact_key] = scrubbed_val
+            doc_ref.set(
+                {
+                    "policy_number": policy_number.strip().upper(),
+                    "facts": facts,
+                    "updated_at": datetime.now(UTC).isoformat(),
+                }
+            )
+        except Exception as exc:
+            logger.warning(f"Firestore save_memory_fact fallback: {exc}")
 
     def get_memory_facts(self, policy_number: str) -> dict[str, str]:
-        doc = self._col("memories").document(policy_number.strip().upper()).get()
-        if not doc.exists:
-            return {}
-        data = doc.to_dict() or {}
-        return dict(data.get("facts", {}))
+        if not self._firestore_healthy:
+            return self._fallback.get_memory_facts(policy_number)
+        try:
+            doc = self._col("memories").document(policy_number.strip().upper()).get()
+            if not doc.exists:
+                return self._fallback.get_memory_facts(policy_number)
+            data = doc.to_dict() or {}
+            return dict(data.get("facts", {})) or self._fallback.get_memory_facts(policy_number)
+        except Exception:
+            return self._fallback.get_memory_facts(policy_number)
 
 
 _REPOSITORY_SINGLETON: ClaimPulseRepository | None = None

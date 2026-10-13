@@ -23,7 +23,7 @@ locals {
 # Serverless remote database for distributed Agent Runtime reasoning engines
 resource "google_firestore_database" "claimpulse_db" {
   project                     = var.project_id
-  name                        = "(default)"
+  name                        = "claimpulse-db"
   location_id                 = var.region
   type                        = "FIRESTORE_NATIVE"
   concurrency_mode            = "OPTIMISTIC"

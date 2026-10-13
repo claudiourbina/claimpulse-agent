@@ -44,19 +44,21 @@ gcloud services enable \
   bigquery.googleapis.com \
   --project="${PROJECT_ID}"
 
-echo "==> [2/6] Ensuring Serverless Cloud Firestore (Native Mode) database exists..."
-if ! gcloud firestore databases describe --database="(default)" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+FIRESTORE_DB="${CLAIM_PULSE_FIRESTORE_DB:-claimpulse-db}"
+
+echo "==> [2/6] Ensuring Serverless Cloud Firestore (Native Mode) database '${FIRESTORE_DB}' exists..."
+if ! gcloud firestore databases list --project="${PROJECT_ID}" --format="value(name)" | grep -q "/databases/${FIRESTORE_DB}$"; then
   gcloud firestore databases create \
-    --database="(default)" \
+    --database="${FIRESTORE_DB}" \
     --location="${REGION}" \
     --type=firestore-native \
     --project="${PROJECT_ID}"
 else
-  echo "    Firestore (default) database already exists."
+  echo "    Firestore database '${FIRESTORE_DB}' already exists."
 fi
 
-echo "==> [3/6] Seeding Cloud Firestore with ClaimPulse policies, adjusters, workshops & tow units..."
-GOOGLE_CLOUD_PROJECT="${PROJECT_ID}" uv run python -m app.storage.seeder --backend firestore --project "${PROJECT_ID}"
+echo "==> [3/6] Seeding Cloud Firestore ('${FIRESTORE_DB}') with ClaimPulse policies, adjusters, workshops & tow units..."
+CLAIM_PULSE_FIRESTORE_DB="${FIRESTORE_DB}" GOOGLE_CLOUD_PROJECT="${PROJECT_ID}" uv run python -m app.storage.seeder --backend firestore --project "${PROJECT_ID}"
 
 deploy_role_engine() {
   local role="$1"
@@ -86,7 +88,7 @@ print(creds.token)
     --region "${REGION}" \
     --service-name "${service_name}" \
     --labels "app=claimpulse,role=${role}" \
-    --update-env-vars "CLAIM_PULSE_AGENT_ROLE=${role},CLAIM_PULSE_STORAGE_BACKEND=firestore,CLAIM_PULSE_DEPLOYMENT_MODE=agent_runtime${extra_env}" \
+    --update-env-vars "CLAIM_PULSE_AGENT_ROLE=${role},CLAIM_PULSE_STORAGE_BACKEND=firestore,CLAIM_PULSE_FIRESTORE_DB=${FIRESTORE_DB},CLAIM_PULSE_DEPLOYMENT_MODE=agent_runtime${extra_env}" \
     --no-confirm-project
 
   cp deployment_metadata.json "${meta_backup}"

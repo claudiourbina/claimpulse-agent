@@ -294,7 +294,7 @@ class FirestoreRepository:
     ) -> None:
         self._project_id = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT")
         self._database = database or os.environ.get(
-            "CLAIM_PULSE_FIRESTORE_DB", "(default)"
+            "CLAIM_PULSE_FIRESTORE_DB", "claimpulse-db"
         )
         if client is not None:
             self._client = client

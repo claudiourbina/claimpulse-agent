@@ -22,11 +22,6 @@ from google.adk.agents import Agent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.apps import App
 from google.adk.models import Gemini
-from google.adk.plugins.bigquery_agent_analytics_plugin import (
-    BigQueryAgentAnalyticsPlugin,
-    BigQueryLoggerConfig,
-)
-from google.cloud import bigquery
 from google.genai import types
 
 from app.discovery.model_router import ClaimPulseSafetyGuardrailPlugin
@@ -238,6 +233,12 @@ _location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
 
 if _project_id:
     try:
+        from google.adk.plugins.bigquery_agent_analytics_plugin import (
+            BigQueryAgentAnalyticsPlugin,
+            BigQueryLoggerConfig,
+        )
+        from google.cloud import bigquery
+
         bq = bigquery.Client(project=_project_id)
         bq.create_dataset(f"{_project_id}.{_dataset_id}", exists_ok=True)
 
